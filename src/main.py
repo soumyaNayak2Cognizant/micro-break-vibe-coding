@@ -7,11 +7,14 @@ from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QIcon
 from plyer import notification
 from activity_monitor import ActivityMonitor
-from onboarding import OnboardingDialog
+from onboarding import OnboardingDialog, ACTIVITIES
 from dashboard import Dashboard
 from db import init_db, get_db_connection
 from autostart import add_to_startup
 import datetime
+import traceback
+from winotify import Notification
+from win10toast import ToastNotifier
 
 APP_NAME = 'MicroBreaksApp'
 ICON_PATH = os.path.join(os.path.dirname(__file__), 'icon.ico') if os.path.exists(os.path.join(os.path.dirname(__file__), 'icon.ico')) else None
@@ -20,20 +23,27 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('Micro Breaks')
-        self.setGeometry(100, 100, 400, 400)
+        self.setGeometry(100, 100, 400, 500)
         label = QLabel('Welcome to Micro Breaks!', self)
-        label.setGeometry(100, 50, 200, 40)
+        label.setGeometry(100, 40, 200, 40)
 
-        # Move Show Dashboard button to Edit Preferences button location
+        # Ensure DB is initialized before any DB access
+        init_db()
+
+        # Persistent reference to tray icon
+        self._tray_icon_ref = None
+
         self.dashboard_btn = QPushButton('Show Dashboard', self)
         self.dashboard_btn.setGeometry(160, 20, 130, 30)
         self.dashboard_btn.clicked.connect(self.open_dashboard)
-        self.dashboard_btn.setVisible(True)
+        self.dashboard_btn.setVisible(False)
+        self.open_dashboard()
         # Remove Edit Preferences button from main window
         # ...existing code...
 
         # System tray
         self.tray_icon = QSystemTrayIcon(self)
+        self._tray_icon_ref = self.tray_icon  # Prevent garbage collection
         if ICON_PATH:
             self.tray_icon.setIcon(QIcon(ICON_PATH))
         else:
@@ -59,7 +69,6 @@ class MainWindow(QMainWindow):
         # Add to startup
         add_to_startup(APP_NAME, os.path.abspath(sys.argv[0]))
 
-        init_db()
         self.load_preferences()
         self.activity_monitor = ActivityMonitor(idle_threshold=60)
         self.activity_monitor.start()
@@ -68,6 +77,7 @@ class MainWindow(QMainWindow):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.check_for_break)
         self.timer.start(10000)  # check every 10 seconds
+        self.win_toaster = ToastNotifier()
 
     def user_data_exists(self):
         conn = get_db_connection()
@@ -107,37 +117,31 @@ class MainWindow(QMainWindow):
 
     def show_break_notification(self):
         import random
+        from PyQt5.QtWidgets import QMessageBox
         break_type = random.choice(self.break_types)
-        msg_map = {
-            'flower': '🌸 Find a flower (look away and spot something beautiful)',
-            'stretch': '🧘 Do a stretch (stand up and stretch your body)',
-            'walk': '🚶 Take a 2-minute walk (move away from your desk)',
-            'breath': '🎯 Breathing exercise (close your eyes and breathe deeply)',
-            'music': '🎵 Listen to a short music clip (relax your mind)',
-            'hydrate': '💧 Drink a glass of water (hydrate yourself)',
-            'window': '🌤️ Look out the window (rest your eyes and mind)',
-            'gratitude': '🙏 Think of something you are grateful for',
-            'posture': '🪑 Check your posture (sit up straight and relax your shoulders)',
-            'nature': '🌳 Visualize a peaceful nature scene',
-            'affirmation': '💬 Say a positive affirmation to yourself',
-            'light': '🔆 Adjust your lighting (reduce screen glare)',
-            'journal': '📓 Jot down a quick thought or feeling',
-            'laugh': '😂 Watch or recall something funny',
-            'clean': '🧹 Tidy up your desk for a minute',
-            'silence': '🤫 Sit in silence and observe your breath',
-            'balance': '🧘‍♂️ Try a simple balance pose (e.g., stand on one leg)',
-            'color': '🎨 Look at something colorful around you',
-            'memory': '🧠 Recall a happy memory',
-            'smell': '👃 Smell something pleasant (e.g., essential oil, coffee)',
-            'light_walk': '🚶‍♂️ Walk to a different room and back',
-            'sunlight': '☀️ Get some sunlight if possible',
-            'pet': '🐶 Spend a minute with your pet (if available)'
-        }
-        notification.notify(
-            title='Micro Break Reminder',
-            message=f'Time for a micro break! {msg_map.get(break_type, "Look away from your screen!")}',
-            timeout=10
-        )
+        msg_map = ACTIVITIES
+        try:
+            toast = Notification(app_id="Micro Breaks",
+                                 title="Micro Break Reminder",
+                                 msg=f"Time for a micro break! {msg_map.get(break_type, 'Look away from your screen!')}")
+            toast.show()
+        except Exception:
+            try:
+                self.win_toaster.show_toast(
+                    'Micro Break Reminder',
+                    f'Time for a micro break! {msg_map.get(break_type, "Look away from your screen!")}',
+                    duration=10,
+                    threaded=True
+                )
+            except Exception:
+                try:
+                    notification.notify(
+                        title='Micro Break Reminder',
+                        message=f'Time for a micro break! {msg_map.get(break_type, "Look away from your screen!")}',
+                        timeout=10
+                    )
+                except Exception:
+                    QMessageBox.information(self, 'Micro Break Reminder', f'Time for a micro break! {msg_map.get(break_type, "Look away from your screen!")}')
         # Log break
         conn = get_db_connection()
         c = conn.cursor()
@@ -213,7 +217,13 @@ class MainWindow(QMainWindow):
             self.show_main()
 
 if __name__ == '__main__':
-    app = QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec_())
+    try:
+        app = QApplication(sys.argv)
+        window = MainWindow()
+        window.show()
+        sys.exit(app.exec_())
+    except Exception as e:
+        # with open('microbreaks_error.log', 'w') as f:
+            # f.write(traceback.format_exc())
+        from PyQt5.QtWidgets import QMessageBox
+        QMessageBox.critical(None, 'Micro Breaks Error', traceback.format_exc())
