@@ -1,6 +1,6 @@
 # Micro Breaks
 <p align="center">
-    <img src="assets/jpeg.jfif" alt="Micro Break Logo" width="200"/>
+    <img src="assets/logo.png" alt="Micro Break Logo" width="200"/>
 </p>
 
 ## Features
